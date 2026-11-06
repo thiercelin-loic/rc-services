@@ -1,0 +1,22 @@
+# ------------------------------------------------------------------------------
+# Local / docker-compose development profile  (SPRING_PROFILES_ACTIVE=local)
+# - No Flyway migrations exist yet, so Hibernate manages the schema.
+# - Keycloak is not part of the local stack: JWT validation is disabled by
+#   LocalSecurityConfig for local development.
+# ------------------------------------------------------------------------------
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false
+
+rollercoaster:
+  duckdb:
+    max-memory: "1GB"
+    threads: 4
+
+management:
+  endpoint:
+    health:
+      show-details: always

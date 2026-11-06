@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: rc-services
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  mvc:
+    problemdetails:
+      enabled: true
+    apiversion:
+      default: "1.0.0"
+      use:
+        header: "X-Version"
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:rollercoaster_analytics}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+    username: ${MYSQL_USER:rc_app_user}
+    password: ${APP_DB_PASSWORD:rc_secret}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    connection-fetch: lazy
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 5000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          batch_size: 500
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300s
+      cache-null-values: false
+      use-key-prefix: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:https://auth.rollercoaster.com/realms/rollercoaster}
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+  compression:
+    enabled: true
+    mime-types: application/json,text/csv,text/tab-separated-values,application/javascript
+    min-response-size: 2048
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+rollercoaster:
+  isolation:
+    zero-egress-enforced: true
+    telemetry-enabled: false
+  duckdb:
+    max-memory: "4GB"
+    threads: 8
+    autoinstall-known-extensions: false
+    autoload-known-extensions: false
+    extensions-dir: "${DUCKDB_EXTENSIONS_DIR:/opt/duckdb/extensions}"
+    parquet-base-dir: "${PARQUET_BASE_DIR:/data/parquet}"
+    staging-dir: "${DUCKDB_STAGING_DIR:/staging}"
+    row-threshold-for-columnar: 1000000
+  ingestion:
+    max-batch-rows: 10000
+    aggregation-max-buckets: 100000
+    max-heap-mb: 64
+    web-connect-timeout-seconds: 5
+    web-read-timeout-seconds: 30
+    rate-limit-capacity: 60
+    rate-limit-refill-per-minute: 60
+  export:
+    xlsx-window-size: 100
+    xlsx-max-rows: 1048576
+    headless-renderer-url: "${HEADLESS_RENDERER_URL:http://headless-renderer:3000/render-pdf}"
+  security:
+    aes-gcm-master-key: "${AES_GCM_MASTER_KEY:0123456789abcdef0123456789abcdef}"
+    access-token-ttl-minutes: 15
+    refresh-token-ttl-days: 7
+    argon2:
+      memory-kb: 65536
+      iterations: 3
+      parallelism: 4
+      salt-length: 16
+      hash-length: 32
