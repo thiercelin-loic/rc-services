@@ -26,22 +26,16 @@ public class ExportController {
         this.exportService = exportService;
     }
 
-    @PostMapping(
-            value = "/export/pdf",
-            consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.APPLICATION_JSON_VALUE)
-    @PreAuthorize("hasAnyAuthority('PERM_REPORT_READ', 'ROLE_ADMIN', 'ROLE_USER', 'ROLE_OPERATOR')")
+    @PostMapping(value = "/export/pdf", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
     public ResponseEntity<ExportJobReceipt> exportPdf(@Valid @RequestBody ExportRequest request) {
         LOGGER.info("Received REST request to export PDF for report: {}", request.reportId());
         ExportJobReceipt receipt = exportService.exportPdf(request);
         return ResponseEntity.ok(receipt);
     }
 
-    @PostMapping(
-            value = "/{reportId}/visuals/{visualId}/export",
-            consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.APPLICATION_JSON_VALUE)
-    @PreAuthorize("hasAnyAuthority('PERM_REPORT_READ', 'ROLE_ADMIN', 'ROLE_USER', 'ROLE_OPERATOR')")
+    @PostMapping(value = "/{reportId}/visuals/{visualId}/export", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
     public ResponseEntity<ExportJobReceipt> exportVisual(
             @PathVariable String reportId,
             @PathVariable String visualId,
