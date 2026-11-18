@@ -9,7 +9,6 @@ public enum SourceFormat {
     JSON,
     XML,
     XLSX,
-    PARQUET,
     AVRO,
     REST_API,
     HTML_SCRAPER
