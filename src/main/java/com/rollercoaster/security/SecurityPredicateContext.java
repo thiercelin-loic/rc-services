@@ -38,7 +38,7 @@ public record SecurityPredicateContext(
                 "anon-rls-hash",
                 false,
                 Map.of("tenantId", tenantId != null ? tenantId : "default-tenant"),
-                Set.of("PERM_REPORT_READ", "PERM_MODEL_WRITE", "PERM_SYSTEM_ADMIN"),
+                Set.of("PERM_REPORT_READ", "PERM_MODEL_WRITE"),
                 Map.of()
         );
     }

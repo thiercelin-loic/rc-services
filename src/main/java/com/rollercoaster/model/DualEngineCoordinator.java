@@ -1,5 +1,6 @@
 package com.rollercoaster.model;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rollercoaster.config.RedisCacheAndPubSubConfig;
@@ -11,8 +12,12 @@ import com.rollercoaster.rax.context.FilterContext;
 import com.rollercoaster.security.DynamicDataMaskingService;
 import com.rollercoaster.security.RlsSecurityContextResolver;
 import com.rollercoaster.security.SecurityPredicateContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -36,6 +41,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class DualEngineCoordinator {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DualEngineCoordinator.class);
 
     private final RaxFormulaCompiler raxFormulaCompiler;
     private final DuckDbConnectionManager duckDbConnectionManager;
@@ -78,6 +85,10 @@ public class DualEngineCoordinator {
             invalidateTenantCache(tenantId);
         }
         return count;
+    }
+
+    public List<Map<String, Object>> getTableRows(String tableName) {
+        return duckDbConnectionManager.getTableRows(tableName);
     }
 
     public QueryExecutionResult executeVisualQuery(
@@ -176,8 +187,7 @@ public class DualEngineCoordinator {
         // 4. Synchronize schema tables in DuckDB & execute against selected engine
         duckDbConnectionManager.synchronizeModelTables(model);
         List<Map<String, Object>> resultRows = dispatchQuery(targetEngine, executableSql);
-        boolean isPrivileged = rlsContext.authorities().contains("PERM_SYSTEM_ADMIN");
-        List<Map<String, Object>> maskedRows = dataMaskingService.maskQueryResultRows(resultRows, model, isPrivileged);
+        List<Map<String, Object>> maskedRows = dataMaskingService.maskQueryResultRows(resultRows, model, false);
 
         // 5. Populate Redis L1 Cache with 300s TTL
         storeInL1Cache(cacheKey, maskedRows);
@@ -250,7 +260,8 @@ public class DualEngineCoordinator {
                 if (keys != null && !keys.isEmpty()) {
                     redisTemplate.delete(keys);
                 }
-            } catch (Exception ignored) {
+            } catch (RedisConnectionFailureException | IllegalStateException ex) {
+                LOGGER.warn("Failed to invalidate Redis query cache for tenant {}: {}", tenantId, ex.getMessage());
             }
         }
     }
@@ -424,8 +435,8 @@ public class DualEngineCoordinator {
         if (targetEngine == SqlDialect.MYSQL && jdbcTemplate != null) {
             try {
                 return jdbcTemplate.queryForList(sql);
-            } catch (Exception ignored) {
-                // Fall back to in-process DuckDB when running without live MySQL container
+            } catch (DataAccessException ex) {
+                LOGGER.debug("MySQL query failed, falling back to in-process DuckDB: {}", ex.getMessage());
             }
         }
         try {
@@ -442,7 +453,8 @@ public class DualEngineCoordinator {
                 if (json != null && !json.isBlank()) {
                     return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
                 }
-            } catch (Exception ignored) {
+            } catch (RedisConnectionFailureException | JsonProcessingException | IllegalStateException ex) {
+                LOGGER.debug("Redis L1 cache lookup failed for key {}: {}", cacheKey, ex.getMessage());
             }
         }
         return localL1CacheFallback.get(cacheKey);
@@ -454,7 +466,8 @@ public class DualEngineCoordinator {
             try {
                 String payload = objectMapper.writeValueAsString(rows);
                 redisTemplate.opsForValue().set(cacheKey, payload, RedisCacheAndPubSubConfig.QUERY_CACHE_TTL);
-            } catch (Exception ignored) {
+            } catch (RedisConnectionFailureException | JsonProcessingException | IllegalStateException ex) {
+                LOGGER.warn("Redis L1 cache store failed for key {}: {}", cacheKey, ex.getMessage());
             }
         }
     }

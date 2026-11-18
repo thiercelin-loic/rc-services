@@ -21,8 +21,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String CLAIM_SUBJECT = "sub";
-    private static final String CLAIM_ROLE = "role";
-    private static final String DEFAULT_ROLE = "ROLE_OPERATOR";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final TokenBlacklistService tokenBlacklistService;
@@ -71,56 +69,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        String role = (String) claims.getOrDefault(CLAIM_ROLE, DEFAULT_ROLE);
-        UsernamePasswordAuthenticationToken authentication = buildAuthentication(username, role, request);
+        UsernamePasswordAuthenticationToken authentication = buildAuthentication(username, request);
         SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
     private UsernamePasswordAuthenticationToken buildAuthentication(
             String username,
-            String role,
             HttpServletRequest request) {
 
-        java.util.List<org.springframework.security.core.GrantedAuthority> authorities = mapRoleToAuthorities(role);
+        java.util.List<org.springframework.security.core.GrantedAuthority> authorities = java.util.List.of(
+                new SimpleGrantedAuthority("PERM_REPORT_READ"),
+                new SimpleGrantedAuthority("PERM_MODEL_WRITE"),
+                new SimpleGrantedAuthority("PERM_MODEL_READ"),
+                new SimpleGrantedAuthority("PERM_INGEST_RUN")
+        );
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                 username,
                 null,
                 authorities);
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         return authentication;
-    }
-
-    private java.util.List<org.springframework.security.core.GrantedAuthority> mapRoleToAuthorities(String role) {
-        java.util.List<org.springframework.security.core.GrantedAuthority> authorities = new java.util.ArrayList<>();
-        String normalizedRole = (role == null || role.isBlank()) ? DEFAULT_ROLE : role.trim().toUpperCase();
-        if (!normalizedRole.startsWith("ROLE_")) {
-            normalizedRole = "ROLE_" + normalizedRole;
-        }
-        authorities.add(new SimpleGrantedAuthority(normalizedRole));
-
-        switch (normalizedRole) {
-            case "ROLE_ADMIN":
-                authorities.add(new SimpleGrantedAuthority("PERM_REPORT_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_WRITE"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_INGEST_RUN"));
-                authorities.add(new SimpleGrantedAuthority("PERM_ADMIN"));
-                break;
-            case "ROLE_OPERATOR":
-            case "ROLE_ANALYST":
-                authorities.add(new SimpleGrantedAuthority("PERM_REPORT_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_WRITE"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_INGEST_RUN"));
-                break;
-            case "ROLE_USER":
-            default:
-                authorities.add(new SimpleGrantedAuthority("PERM_REPORT_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_READ"));
-                authorities.add(new SimpleGrantedAuthority("PERM_MODEL_WRITE"));
-                authorities.add(new SimpleGrantedAuthority("PERM_INGEST_RUN"));
-                break;
-        }
-        return authorities;
     }
 }
