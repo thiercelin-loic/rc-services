@@ -12,8 +12,6 @@ import java.util.Optional;
 @Transactional
 public class AuthServiceImpl implements AuthService {
 
-    private static final String DEFAULT_TENANT_ID = "ws-90124-enterprise";
-    private static final String DEFAULT_ROLE = "ROLE_OPERATOR";
     private static final String ANONYMOUS_PRINCIPAL = "anonymousUser";
 
     private final UserRepository userRepository;
@@ -42,18 +40,13 @@ public class AuthServiceImpl implements AuthService {
         assertUsernameAvailable(normalizedUsername);
         assertEmailAvailable(normalizedEmail);
 
-        // DEF-02: Public self-registration assigns strictly DEFAULT_ROLE to prevent
-        // privilege escalation
-        String assignedRole = DEFAULT_ROLE;
         String encodedPassword = passwordEncoder.encode(request.password());
 
         UserEntity newUser = UserEntity.create(
                 normalizedUsername,
                 normalizedEmail,
                 encodedPassword,
-                request.fullName(),
-                assignedRole,
-                DEFAULT_TENANT_ID);
+                request.fullName());
 
         UserEntity savedUser = userRepository.save(newUser);
         String accessToken = jwtTokenProvider.generateToken(savedUser);

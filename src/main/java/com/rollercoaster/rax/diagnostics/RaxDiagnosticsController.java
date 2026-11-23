@@ -39,6 +39,23 @@ public class RaxDiagnosticsController {
             SemanticModelSchema schema) {
     }
 
+    public record FormulaInspectRequest(
+            String workspaceId,
+            String formula,
+            String defaultMeasureName,
+            SemanticModelSchema schema
+    ) {}
+
+    @PostMapping("/validate")
+    public ResponseEntity<MonacoDiagnosticsService.RaxValidationResponse> inspectFormulaRest(
+            @RequestBody FormulaInspectRequest request) {
+        LOGGER.debug("Inspecting and tokenizing RAX formula via REST for workspace: {}", request.workspaceId());
+        return ResponseEntity.ok(diagnosticsService.inspectFormula(
+                request.formula(),
+                request.defaultMeasureName(),
+                request.schema()));
+    }
+
     @PostMapping
     public ResponseEntity<List<DiagnosticMarker>> validateFormulaRest(@Valid @RequestBody DiagnosticsRequest request) {
         LOGGER.debug("Validating RAX formula via REST for workspace: {}", request.workspaceId());

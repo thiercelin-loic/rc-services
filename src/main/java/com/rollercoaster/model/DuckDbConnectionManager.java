@@ -2,6 +2,8 @@ package com.rollercoaster.model;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +33,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 @Component
 public class DuckDbConnectionManager {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(DuckDbConnectionManager.class);
+
     private final String maxMemory;
     private final int threads;
     private final ReadWriteLock partitionLock = new ReentrantReadWriteLock();
@@ -53,7 +57,7 @@ public class DuckDbConnectionManager {
             Class.forName("org.duckdb.DuckDBDriver");
             this.primaryConnection = DriverManager.getConnection("jdbc:duckdb:");
             applyGovernancePragmas(this.primaryConnection);
-        } catch (Exception e) {
+        } catch (ClassNotFoundException | SQLException e) {
             throw new IllegalStateException("Failed to initialize embedded DuckDB JNI engine", e);
         }
     }
@@ -63,7 +67,8 @@ public class DuckDbConnectionManager {
         if (this.primaryConnection != null) {
             try {
                 this.primaryConnection.close();
-            } catch (SQLException ignored) {
+            } catch (SQLException ex) {
+                LOGGER.debug("Ignoring error closing primary DuckDB connection: {}", ex.getMessage());
             }
         }
     }
@@ -79,7 +84,8 @@ public class DuckDbConnectionManager {
                 applyGovernancePragmas(dup);
                 return dup;
             }
-        } catch (Exception ignored) {
+        } catch (SQLException ex) {
+            LOGGER.debug("DuckDB connection duplication failed, opening fresh connection: {}", ex.getMessage());
         }
         return DriverManager.getConnection("jdbc:duckdb:");
     }
@@ -110,7 +116,8 @@ public class DuckDbConnectionManager {
                  Statement stmt = conn.createStatement()) {
                 stmt.execute("CREATE OR REPLACE VIEW " + viewName
                         + " AS SELECT * FROM read_parquet('" + normalizedPath + "')");
-            } catch (Exception ignored) {
+            } catch (SQLException ex) {
+                LOGGER.warn("Failed to rebind DuckDB Parquet view {} for {}: {}", viewName, normalizedPath, ex.getMessage());
             }
         } finally {
             partitionLock.writeLock().unlock();
@@ -180,7 +187,8 @@ public class DuckDbConnectionManager {
                     }
                 }
             }
-        } catch (Exception ignored) {
+        } catch (SQLException ex) {
+            LOGGER.warn("Failed to synchronize DuckDB semantic model tables: {}", ex.getMessage());
         } finally {
             partitionLock.writeLock().unlock();
         }
@@ -265,7 +273,8 @@ public class DuckDbConnectionManager {
         }
         try {
             return executeColumnarQuery("SELECT * FROM " + safeTable + " LIMIT 10000");
-        } catch (Exception ignored) {
+        } catch (SQLException ex) {
+            LOGGER.debug("Failed to query DuckDB table {}: {}", safeTable, ex.getMessage());
             return List.of();
         }
     }

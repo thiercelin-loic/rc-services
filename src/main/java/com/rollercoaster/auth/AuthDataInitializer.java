@@ -12,10 +12,6 @@ public class AuthDataInitializer implements ApplicationRunner {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AuthDataInitializer.class);
 
-    private static final String DEFAULT_TENANT_ID = "ws-90124-enterprise";
-    private static final String ROLE_ADMIN = "ROLE_ADMIN";
-    private static final String ROLE_OPERATOR = "ROLE_OPERATOR";
-
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -34,23 +30,20 @@ public class AuthDataInitializer implements ApplicationRunner {
                 "operator",
                 "operator@rollercoaster.com",
                 "Operator123!",
-                "Lead Operator",
-                ROLE_ADMIN);
+                "Lead Operator");
 
         initializeUserIfAbsent(
                 "analyst",
                 "analyst@rollercoaster.com",
                 "Analyst123!",
-                "Data Analyst",
-                ROLE_OPERATOR);
+                "Data Analyst");
     }
 
     private void initializeUserIfAbsent(
             String username,
             String email,
             String rawPassword,
-            String fullName,
-            String role) {
+            String fullName) {
 
         if (userRepository.existsByUsernameIgnoreCase(username)) {
             return;
@@ -61,11 +54,9 @@ public class AuthDataInitializer implements ApplicationRunner {
                 username,
                 email,
                 encodedPassword,
-                fullName,
-                role,
-                DEFAULT_TENANT_ID);
+                fullName);
 
         userRepository.save(newUser);
-        LOGGER.info("[Auth] Initialized default user account '{}' with role '{}'.", username, role);
+        LOGGER.info("[Auth] Initialized default user account '{}'.", username);
     }
 }

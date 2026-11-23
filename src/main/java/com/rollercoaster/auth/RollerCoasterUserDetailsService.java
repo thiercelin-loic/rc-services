@@ -1,6 +1,5 @@
 package com.rollercoaster.auth;
 
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -38,7 +37,7 @@ public class RollerCoasterUserDetailsService implements UserDetailsService {
                 .username(user.getUsername())
                 .password(user.getPassword())
                 .disabled(!user.isActive())
-                .authorities(Collections.singletonList(new SimpleGrantedAuthority(user.getRole())))
+                .authorities(Collections.emptyList())
                 .build();
     }
 }

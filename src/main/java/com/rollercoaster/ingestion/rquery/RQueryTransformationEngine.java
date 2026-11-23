@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -31,10 +30,9 @@ import java.util.regex.Pattern;
 @Service
 public class RQueryTransformationEngine {
 
-    private static final Pattern BRACKET_COL_PATTERN = Pattern.compile("\\[([^\\]]+)\\]");
-
     private final TypeInferenceEngine typeInferenceEngine;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final RQueryExpressionEvaluator expressionEvaluator = new RQueryExpressionEvaluator();
 
     public RQueryTransformationEngine(TypeInferenceEngine typeInferenceEngine) {
         this.typeInferenceEngine = typeInferenceEngine;
@@ -83,7 +81,7 @@ public class RQueryTransformationEngine {
             case "TransformColumnNamesStep", "TransformColumnNames" -> applyTransformColumnNames(batch, step);
             case "RemoveColumnStep", "RemoveColumn" -> applyRemoveColumn(batch, step);
             case "RemoveOtherColumnsStep", "RemoveOtherColumns" -> applyRemoveOtherColumns(batch, step);
-            case "UnpivotColumnsStep", "UnpivotColumns", "UnpivotOtherColumnsStep" -> applyUnpivotColumns(batch, step);
+            case "UnpivotColumnsStep", "UnpivotColumns", "UnpivotOtherColumnsStep", "UnpivotOtherColumns" -> applyUnpivotColumns(batch, step);
             case "GroupRowsStep", "GroupRows" -> applyGroupRows(batch, step);
             case "MergeQueriesStep", "MergeQueries" -> applyMergeQueries(batch, step, dimensionLookupTables);
             case "AddCustomColumnStep", "AddCustomColumn" -> applyAddCustomColumn(batch, step, tenantId, datasetId);
@@ -97,12 +95,35 @@ public class RQueryTransformationEngine {
             case "MergeColumnsStep", "MergeColumns" -> applyMergeColumns(batch, step);
             case "RemoveDuplicatesStep", "RemoveDuplicates" -> applyRemoveDuplicates(batch, step);
             case "SortRowsStep", "SortRows" -> applySortRows(batch, step);
-            case "InlineCleansingStep", "InlineCleansing" -> applyInlineCleansing(
-                    batch,
-                    step.column(),
-                    step.expression() != null ? step.expression() : "ROUND_2_DECIMALS");
+            case "InlineCleansingStep", "InlineCleansing" -> applyInlineCleansingStep(batch, step);
             default -> batch;
         };
+    }
+
+    private RecordBatch applyInlineCleansingStep(RecordBatch batch, RQueryStep step) {
+        String action = step.expression();
+        if ((action == null || action.isBlank()) && step.parameters() != null && step.parameters().get("operation") != null) {
+            action = step.parameters().get("operation").toString();
+        }
+        if (action == null || action.isBlank()) {
+            action = "ROUND_2_DECIMALS";
+        }
+        if ("REPLACE".equalsIgnoreCase(action) && step.parameters() != null) {
+            String target = step.parameters().get("target") != null ? step.parameters().get("target").toString() : "";
+            String replacement = step.parameters().get("replacement") != null ? step.parameters().get("replacement").toString() : "";
+            String colName = step.column();
+            List<Map<String, Object>> rows = new ArrayList<>(batch.rows().size());
+            for (Map<String, Object> row : batch.rows()) {
+                Map<String, Object> copy = new LinkedHashMap<>(row);
+                Object val = copy.get(colName);
+                if (val != null && !target.isEmpty()) {
+                    copy.put(colName, val.toString().replace(target, replacement));
+                }
+                rows.add(copy);
+            }
+            return new RecordBatch(batch.batchIndex(), batch.schema(), rows, batch.quarantinedRecords());
+        }
+        return applyInlineCleansing(batch, step.column(), action);
     }
 
     /**
@@ -135,6 +156,24 @@ public class RQueryTransformationEngine {
                 case "REPLACE_NULLS_WITH_ZERO" -> {
                     if (val == null || val.toString().isBlank()) {
                         copy.put(columnName, 0.0);
+                    }
+                    transformed.add(copy);
+                }
+                case "TRIM" -> {
+                    if (val != null) {
+                        copy.put(columnName, val.toString().trim());
+                    }
+                    transformed.add(copy);
+                }
+                case "UPPERCASE" -> {
+                    if (val != null) {
+                        copy.put(columnName, val.toString().toUpperCase());
+                    }
+                    transformed.add(copy);
+                }
+                case "LOWERCASE" -> {
+                    if (val != null) {
+                        copy.put(columnName, val.toString().toLowerCase());
                     }
                     transformed.add(copy);
                 }
@@ -237,13 +276,24 @@ public class RQueryTransformationEngine {
     }
 
     private RecordBatch applyTransformColumnNames(RecordBatch batch, RQueryStep step) {
-        String mode = step.expression() != null ? step.expression().toUpperCase() : "REPLACE_TEXT";
-        String searchOrAffix = step.oldName() != null ? step.oldName() : "_";
-        String replacement = step.newName() != null ? step.newName() : " ";
+        String mode = step.expression() != null ? step.expression().toUpperCase() : null;
+        if ((mode == null || mode.isBlank()) && step.parameters() != null && step.parameters().get("operation") != null) {
+            mode = step.parameters().get("operation").toString().toUpperCase();
+        }
+        if (mode == null || mode.isBlank()) {
+            mode = "REPLACE_TEXT";
+        }
+        String finalMode = mode;
+        String searchOrAffix = step.oldName() != null && !step.oldName().isEmpty() ? step.oldName() : "_";
+        String replacement = step.newName() != null && !step.newName().isEmpty() ? step.newName() : " ";
 
         Map<String, String> renameMap = new LinkedHashMap<>();
         for (String col : batch.schema().keySet()) {
-            String nextName = switch (mode) {
+            String nextName = switch (finalMode) {
+                case "UPPERCASE" -> col.toUpperCase();
+                case "LOWERCASE" -> col.toLowerCase();
+                case "TRIM" -> col.trim();
+                case "CLEAN" -> col.replaceAll("[^a-zA-Z0-9_]", "_");
                 case "ADD_SUFFIX" -> col + searchOrAffix;
                 case "ADD_PREFIX" -> searchOrAffix + col;
                 default -> col.replace(searchOrAffix, replacement).trim();
@@ -282,7 +332,10 @@ public class RQueryTransformationEngine {
 
     private RecordBatch applyRemoveOtherColumns(RecordBatch batch, RQueryStep step) {
         List<String> kept = step.groupColumns() != null ? step.groupColumns()
-                : (step.pivotColumns() != null ? step.pivotColumns() : List.of());
+                : (step.pivotColumns() != null ? step.pivotColumns() : new ArrayList<>());
+        if (kept.isEmpty() && step.parameters() != null && step.parameters().get("keepColumns") instanceof List<?> rawList) {
+            kept = rawList.stream().filter(Objects::nonNull).map(Object::toString).toList();
+        }
         if (kept.isEmpty()) {
             return batch;
         }
@@ -309,7 +362,8 @@ public class RQueryTransformationEngine {
 
     private RecordBatch applyUnpivotColumns(RecordBatch batch, RQueryStep step) {
         List<String> pivotCols;
-        if ("UnpivotOtherColumnsStep".equalsIgnoreCase(step.step()) && step.groupColumns() != null && !step.groupColumns().isEmpty()) {
+        if (("UnpivotOtherColumnsStep".equalsIgnoreCase(step.step()) || "UnpivotOtherColumns".equalsIgnoreCase(step.step()))
+                && step.groupColumns() != null && !step.groupColumns().isEmpty()) {
             Set<String> anchorCols = new LinkedHashSet<>(step.groupColumns());
             pivotCols = batch.schema().keySet().stream().filter(c -> !anchorCols.contains(c)).toList();
         } else {
@@ -460,9 +514,12 @@ public class RQueryTransformationEngine {
             RQueryStep step,
             String tenantId,
             String datasetId) {
+        String colName = (step.column() != null && !step.column().isBlank())
+                ? step.column()
+                : (step.newName() != null && !step.newName().isBlank() ? step.newName() : "Custom");
         DataType colType = step.type() != null ? step.type() : DataType.FLOAT64;
         Map<String, DataType> newSchema = new LinkedHashMap<>(batch.schema());
-        newSchema.put(step.column(), colType);
+        newSchema.put(colName, colType);
 
         List<Map<String, Object>> validRows = new ArrayList<>(batch.rows().size());
         List<QuarantineRecord> quarantined = new ArrayList<>(batch.quarantinedRecords());
@@ -474,7 +531,7 @@ public class RQueryTransformationEngine {
             Map<String, Object> copy = new LinkedHashMap<>(row);
             try {
                 Object computed = evaluateCustomColumnExpression(row, step.expression(), colType);
-                copy.put(step.column(), computed);
+                copy.put(colName, computed);
                 validRows.add(copy);
             } catch (Exception ex) {
                 if (quarantineOnError) {
@@ -482,13 +539,13 @@ public class RQueryTransformationEngine {
                             tenantId,
                             datasetId,
                             rowIdx,
-                            step.column(),
-                            newSchema.get(step.column()).name(),
+                            colName,
+                            newSchema.get(colName).name(),
                             row.toString(),
                             "AddCustomColumnStep error on expression '" + step.expression() + "': " + ex.getMessage()
                     ));
                 } else {
-                    copy.put(step.column(), null);
+                    copy.put(colName, null);
                     validRows.add(copy);
                 }
             }
@@ -497,66 +554,21 @@ public class RQueryTransformationEngine {
     }
 
     private Object evaluateCustomColumnExpression(Map<String, Object> row, String expression, DataType targetType) {
-        if (expression == null || expression.isBlank()) {
-            return targetType == DataType.UTF8_STRING ? "" : 0.0;
-        }
-        String trimmed = expression.trim();
-
-        // 1. Power Query M Text.Select([col], {"0".."9"}) digit extraction
-        if (trimmed.contains("Text.Select")) {
-            Matcher m = BRACKET_COL_PATTERN.matcher(trimmed);
-            if (m.find()) {
-                Object raw = row.get(m.group(1));
-                return raw == null ? "" : raw.toString().replaceAll("[^0-9]", "");
-            }
-        }
-
-        // 2. Conditional Column: if [colA] == "val" then [colB] else null
-        if (trimmed.toLowerCase().startsWith("if ")) {
-            Pattern condPattern = Pattern.compile(
-                    "(?i)^if\\s+(.+?)\\s+then\\s+(.+?)(?:\\s+else\\s+(.+))?$");
-            Matcher cm = condPattern.matcher(trimmed);
-            if (cm.matches()) {
-                String condPart = cm.group(1).trim();
-                String thenPart = cm.group(2).trim();
-                String elsePart = cm.group(3) != null ? cm.group(3).trim() : "null";
-                boolean matched = evaluateRowPredicate(row, condPart);
-                String chosen = matched ? thenPart : elsePart;
-                return resolveTokenValue(row, chosen);
-            }
-        }
-
-        // 3. String concatenation with '&'
-        if (trimmed.contains("&") || targetType == DataType.UTF8_STRING) {
-            if (trimmed.contains("&")) {
-                String[] parts = trimmed.split("&");
-                StringBuilder sb = new StringBuilder();
-                for (String p : parts) {
-                    Object v = resolveTokenValue(row, p.trim());
-                    if (v != null) {
-                        sb.append(v);
-                    }
-                }
-                return sb.toString();
-            }
-        }
-
-        return evaluateRowArithmeticExpression(row, trimmed);
+        return expressionEvaluator.evaluateCustomColumn(row, expression, targetType);
     }
 
-    private Object resolveTokenValue(Map<String, Object> row, String token) {
-        if (token == null || "null".equalsIgnoreCase(token)) {
-            return null;
-        }
-        Matcher m = BRACKET_COL_PATTERN.matcher(token);
-        if (m.matches()) {
-            return row.get(m.group(1));
-        }
-        return token.replaceAll("^[\"']|[\"']$", "");
+    private boolean evaluateRowPredicate(Map<String, Object> row, String predicate) {
+        return expressionEvaluator.evaluatePredicate(row, predicate);
+    }
+
+    private double toDouble(Object val) {
+        return expressionEvaluator.toDouble(val);
     }
 
     private RecordBatch applyAddIndexColumn(RecordBatch batch, RQueryStep step) {
-        String colName = step.column() != null && !step.column().isBlank() ? step.column() : "Index";
+        String colName = (step.column() != null && !step.column().isBlank())
+                ? step.column()
+                : (step.newName() != null && !step.newName().isBlank() ? step.newName() : "Index");
         int initial = 1;
         int increment = 1;
         if (step.parameters() != null) {
@@ -786,7 +798,8 @@ public class RQueryTransformationEngine {
         if (sortCol == null || !batch.schema().containsKey(sortCol)) {
             return batch;
         }
-        boolean desc = "DESC".equalsIgnoreCase(step.expression());
+        boolean desc = "DESC".equalsIgnoreCase(step.expression())
+                || (step.parameters() != null && Boolean.FALSE.equals(step.parameters().get("ascending")));
         List<Map<String, Object>> sorted = new ArrayList<>(batch.rows());
         Comparator<Map<String, Object>> cmp = (a, b) -> {
             Object va = a.get(sortCol);
@@ -801,115 +814,5 @@ public class RQueryTransformationEngine {
         };
         sorted.sort(desc ? cmp.reversed() : cmp);
         return new RecordBatch(batch.batchIndex(), batch.schema(), sorted, batch.quarantinedRecords());
-    }
-
-    private double evaluateRowArithmeticExpression(Map<String, Object> row, String expression) {
-        if (expression == null || expression.isBlank()) {
-            return 0.0;
-        }
-        Matcher matcher = BRACKET_COL_PATTERN.matcher(expression);
-        List<Double> operands = new ArrayList<>();
-        while (matcher.find()) {
-            String colName = matcher.group(1);
-            Object val = row.get(colName);
-            if (val == null) {
-                throw new IllegalArgumentException("Null operand for column [" + colName + "]");
-            }
-            operands.add(toDouble(val));
-        }
-
-        if (operands.size() >= 2) {
-            double left = operands.get(0);
-            double right = operands.get(1);
-            if (expression.contains("/")) {
-                if (Math.abs(right) < 1e-12) {
-                    throw new ArithmeticException("Division by zero in R-Query custom column expression");
-                }
-                return left / right;
-            }
-            if (expression.contains("*")) return left * right;
-            if (expression.contains("-")) return left - right;
-            if (expression.contains("+")) return left + right;
-        }
-        return operands.isEmpty() ? 0.0 : operands.getFirst();
-    }
-
-    private boolean evaluateRowPredicate(Map<String, Object> row, String predicate) {
-        if (predicate == null || predicate.isBlank()) {
-            return true;
-        }
-        // Compound 'and' support (e.g. incremental refresh: [date] >= '2025-01-01' and [date] < '2025-04-01')
-        if (predicate.toLowerCase().contains(" and ")) {
-            String[] clauses = predicate.split("(?i)\\s+and\\s+");
-            for (String clause : clauses) {
-                if (!evaluateSingleClause(row, clause.trim())) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return evaluateSingleClause(row, predicate.trim());
-    }
-
-    private boolean evaluateSingleClause(Map<String, Object> row, String clause) {
-        if (clause.contains("!=" ) || clause.contains("<>")) {
-            String[] parts = clause.split("!=|<>", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String expected = parts[1].replace("\"", "").replace("'", "").trim();
-            Object actual = row.get(col);
-            if ("null".equalsIgnoreCase(expected) || expected.isEmpty()) {
-                return actual != null && !actual.toString().isBlank();
-            }
-            return actual != null && !actual.toString().equalsIgnoreCase(expected);
-        }
-        if (clause.contains(">=")) {
-            String[] parts = clause.split(">=", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String rhs = parts[1].replace("\"", "").replace("'", "").trim();
-            return compareValues(row.get(col), rhs) >= 0;
-        }
-        if (clause.contains("<=")) {
-            String[] parts = clause.split("<=", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String rhs = parts[1].replace("\"", "").replace("'", "").trim();
-            return compareValues(row.get(col), rhs) <= 0;
-        }
-        if (clause.contains("==")) {
-            String[] parts = clause.split("==", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String expected = parts[1].replace("\"", "").replace("'", "").trim();
-            Object actual = row.get(col);
-            return actual != null && Objects.equals(actual.toString(), expected);
-        }
-        if (clause.contains(">")) {
-            String[] parts = clause.split(">", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String rhs = parts[1].replace("\"", "").replace("'", "").trim();
-            return compareValues(row.get(col), rhs) > 0;
-        }
-        if (clause.contains("<")) {
-            String[] parts = clause.split("<", 2);
-            String col = parts[0].replace("[", "").replace("]", "").trim();
-            String rhs = parts[1].replace("\"", "").replace("'", "").trim();
-            return compareValues(row.get(col), rhs) < 0;
-        }
-        return true;
-    }
-
-    private int compareValues(Object actual, String rhs) {
-        if (actual == null) return -1;
-        try {
-            double leftNum = toDouble(actual);
-            double rightNum = Double.parseDouble(rhs);
-            return Double.compare(leftNum, rightNum);
-        } catch (NumberFormatException ignored) {
-            return actual.toString().compareTo(rhs);
-        }
-    }
-
-    private double toDouble(Object val) {
-        if (val == null) return 0.0;
-        if (val instanceof Number n) return n.doubleValue();
-        return Double.parseDouble(val.toString().replaceAll("[€$£,\\s]", ""));
     }
 }

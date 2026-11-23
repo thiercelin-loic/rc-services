@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ==============================================================================
 # Stage 1: Maven build (JDK 21) — ANTLR grammar generation + Spring Boot fat jar
 # ==============================================================================
@@ -7,13 +8,12 @@ WORKDIR /workspace/rc-services
 
 ENV MAVEN_OPTS="-Xmx768m -XX:+UseSerialGC"
 
-# Cache dependencies separately from sources
 COPY pom.xml ./
-RUN mvn -B -q dependency:go-offline || true
-
 COPY src ./src
-RUN mvn -B -DskipTests clean package && \
-    cp target/rc-services-1.0.0.jar /workspace/app.jar
+RUN --mount=type=cache,target=/root/.m2 \
+    --mount=type=cache,target=/workspace/rc-services/target \
+    mvn -B -DskipTests package && \
+    cp target/rc-services-*.jar /workspace/app.jar
 
 # ==============================================================================
 # Stage 2: JRE runtime (glibc-based image: DuckDB JNI does not run on Alpine/musl)
@@ -22,7 +22,10 @@ FROM eclipse-temurin:21-jre AS runtime
 
 RUN mkdir -p /data/parquet /staging /opt/duckdb/extensions /var/lib/rollercoaster/workspaces && \
     groupadd --system rc && useradd --system --gid rc rc && \
-    chown -R rc:rc /data /staging /opt/duckdb /var/lib/rollercoaster
+    chown -R rc:rc /data /staging /opt/duckdb /var/lib/rollercoaster && \
+    cp /opt/java/openjdk/conf/management/jmxremote.password.template /opt/java/openjdk/conf/management/jmxremote.password && \
+    chown rc:rc /opt/java/openjdk/conf/management/jmxremote.password && \
+    chmod 600 /opt/java/openjdk/conf/management/jmxremote.password
 
 USER rc
 WORKDIR /app

@@ -2,8 +2,12 @@ package com.rollercoaster.writeback;
 
 import com.rollercoaster.config.RedisCacheAndPubSubConfig;
 import com.rollercoaster.model.DualEngineCoordinator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class WritebackService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(WritebackService.class);
 
     private final WritebackRepository writebackRepository;
     private final WorkflowEngine workflowEngine;
@@ -53,12 +59,12 @@ public class WritebackService {
                 request.payloadJson(),
                 request.expectedVersion(),
                 "PENDING",
-                Instant.now()
-        );
+                Instant.now());
 
         WorkflowEngine.ValidationOutcome validation = workflowEngine.validateSubmission(entity);
         if (!validation.valid()) {
-            throw new IllegalArgumentException("Write-back validation failed: " + String.join("; ", validation.errors()));
+            throw new IllegalArgumentException(
+                    "Write-back validation failed: " + String.join("; ", validation.errors()));
         }
 
         return writebackRepository.save(entity);
@@ -69,10 +75,7 @@ public class WritebackService {
         WritebackStagingEntity entity = writebackRepository.findById(stagingId)
                 .orElseThrow(() -> new IllegalArgumentException("Staging record not found: " + stagingId));
 
-        String versionKey = compositeKeyIdentifier != null && !compositeKeyIdentifier.isBlank()
-                ? compositeKeyIdentifier
-                : entity.getTargetTable() + ":" + entity.getRecordIdJson();
-
+        String versionKey = resolveVersionKey(entity, compositeKeyIdentifier);
         long currentVersion = recordVersions.getOrDefault(versionKey, entity.getExpectedVersion());
         if (currentVersion != entity.getExpectedVersion()) {
             throw new OptimisticLockingConflictException(
@@ -80,44 +83,17 @@ public class WritebackService {
                             + ": expected version " + entity.getExpectedVersion()
                             + " but found version " + currentVersion,
                     entity.getExpectedVersion(),
-                    currentVersion
-            );
+                    currentVersion);
         }
 
-        // Increment watermark version and mark APPROVED
-        recordVersions.put(versionKey, currentVersion + 1);
+        long nextVersion = currentVersion + 1;
+        recordVersions.put(versionKey, nextVersion);
         entity.setStatus("APPROVED");
         WritebackStagingEntity saved = writebackRepository.save(entity);
 
-        // Invalidate tenant Redis query cache
         dualEngineCoordinator.invalidateTenantCache(entity.getTenantId());
-
-        // Publish Redis Pub/Sub invalidation event
-        if (redisTemplate != null) {
-            try {
-                redisTemplate.convertAndSend(
-                        RedisCacheAndPubSubConfig.CHANNEL_WRITEBACK_EVENTS,
-                        entity.getTenantId() + ":" + entity.getTargetTable() + ":" + saved.getId()
-                );
-            } catch (Exception ignored) {
-            }
-        }
-
-        // Broadcast STOMP WebSocket update to active Angular dashboards
-        if (messagingTemplate != null) {
-            try {
-                messagingTemplate.convertAndSend(
-                        "/topic/writeback/" + entity.getTenantId(),
-                        (Object) Map.of(
-                                "stagingId", saved.getId().toString(),
-                                "targetTable", saved.getTargetTable(),
-                                "status", saved.getStatus(),
-                                "newVersion", currentVersion + 1
-                        )
-                );
-            } catch (Exception ignored) {
-            }
-        }
+        publishInvalidationEvent(entity, saved);
+        broadcastStompUpdate(entity, saved, nextVersion);
 
         return saved;
     }
@@ -130,6 +106,46 @@ public class WritebackService {
         return writebackRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, "PENDING");
     }
 
+    private String resolveVersionKey(WritebackStagingEntity entity, String compositeKeyIdentifier) {
+        if (compositeKeyIdentifier != null && !compositeKeyIdentifier.isBlank()) {
+            return compositeKeyIdentifier;
+        }
+        return entity.getTargetTable() + ":" + entity.getRecordIdJson();
+    }
+
+    private void publishInvalidationEvent(WritebackStagingEntity entity, WritebackStagingEntity saved) {
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            redisTemplate.convertAndSend(
+                    RedisCacheAndPubSubConfig.CHANNEL_WRITEBACK_EVENTS,
+                    entity.getTenantId() + ":" + entity.getTargetTable() + ":" + saved.getId());
+        } catch (RedisConnectionFailureException | IllegalStateException ex) {
+            LOGGER.warn("Failed to publish write-back Redis invalidation event: {}", ex.getMessage());
+        }
+    }
+
+    private void broadcastStompUpdate(
+            WritebackStagingEntity entity,
+            WritebackStagingEntity saved,
+            long nextVersion) {
+        if (messagingTemplate == null) {
+            return;
+        }
+        try {
+            messagingTemplate.convertAndSend(
+                    "/topic/writeback/" + entity.getTenantId(),
+                    (Object) Map.of(
+                            "stagingId", saved.getId().toString(),
+                            "targetTable", saved.getTargetTable(),
+                            "status", saved.getStatus(),
+                            "newVersion", nextVersion));
+        } catch (MessagingException | IllegalStateException ex) {
+            LOGGER.warn("Failed to broadcast STOMP write-back update: {}", ex.getMessage());
+        }
+    }
+
     public record WritebackSubmissionRequest(
             String tenantId,
             String userId,
@@ -139,5 +155,4 @@ public class WritebackService {
             long expectedVersion
     ) {
     }
-
 }

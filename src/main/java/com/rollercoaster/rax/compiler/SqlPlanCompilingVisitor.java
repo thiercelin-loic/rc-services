@@ -304,6 +304,12 @@ public class SqlPlanCompilingVisitor extends RaxGrammarBaseVisitor<String> {
                     : "EXTRACT(YEAR FROM " + visit(arguments.getFirst()) + ")";
             case "USEROBJECTID", "USERPRINCIPALNAME", "USERNAME", "CUSTOMDATA" ->
                     compileSecurityClaimFunction(functionName);
+            case "COUNTROWS" -> {
+                if (!arguments.isEmpty()) {
+                    visit(arguments.getFirst());
+                }
+                yield "COUNT(*)";
+            }
             default -> {
                 String joinedArguments = arguments.stream().map(this::visit).collect(Collectors.joining(", "));
                 yield functionName + "(" + joinedArguments + ")";
@@ -635,7 +641,7 @@ public class SqlPlanCompilingVisitor extends RaxGrammarBaseVisitor<String> {
     }
 
     private String normalizeSqlIdentifier(String rawIdentifier) {
-        return rawIdentifier.replace("'", "").trim().toLowerCase().replace(' ', '_').replace('-', '_');
+        return rawIdentifier.replace("'", "").trim().replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase();
     }
 
     private String extractFunctionInnerArg(String rawCall) {

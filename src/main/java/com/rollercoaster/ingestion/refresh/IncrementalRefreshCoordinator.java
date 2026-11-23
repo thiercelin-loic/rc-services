@@ -2,8 +2,12 @@ package com.rollercoaster.ingestion.refresh;
 
 import com.rollercoaster.config.RedisCacheAndPubSubConfig;
 import com.rollercoaster.model.DuckDbConnectionManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -34,6 +38,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class IncrementalRefreshCoordinator {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(IncrementalRefreshCoordinator.class);
 
     public static final String PARTITIONED_UPSERT_SQL = """
             INSERT INTO fact_partition (tenant_id, id, date_key, `timestamp`, dim_id, metric)
@@ -87,7 +93,8 @@ public class IncrementalRefreshCoordinator {
                 if (cached != null && !cached.isBlank()) {
                     return Instant.parse(cached);
                 }
-            } catch (Exception ignored) {
+            } catch (RedisConnectionFailureException | IllegalStateException | java.time.format.DateTimeParseException ex) {
+                LOGGER.debug("Redis high-watermark lookup failed for key {}: {}", redisKey, ex.getMessage());
             }
         }
         if (jdbcTemplate != null) {
@@ -99,7 +106,8 @@ public class IncrementalRefreshCoordinator {
                 if (maxTs != null) {
                     return maxTs.toInstant();
                 }
-            } catch (Exception ignored) {
+            } catch (DataAccessException ex) {
+                LOGGER.debug("MySQL high-watermark query failed for tenant {}: {}", tenantId, ex.getMessage());
             }
         }
         return inMemoryWatermarkFallback.getOrDefault(redisKey, Instant.EPOCH);
@@ -144,7 +152,8 @@ public class IncrementalRefreshCoordinator {
                     ps.setInt(5, row.dimId());
                     ps.setDouble(6, row.metric());
                 });
-            } catch (Exception ignored) {
+            } catch (DataAccessException ex) {
+                LOGGER.warn("MySQL partition upsert failed for tenant {} (continuing with Parquet): {}", tenantId, ex.getMessage());
             }
         }
 
@@ -161,7 +170,8 @@ public class IncrementalRefreshCoordinator {
                 redisTemplate.convertAndSend(
                         RedisCacheAndPubSubConfig.CACHE_INVALIDATION_TOPIC,
                         "INVALIDATE_TENANT:" + tenantId + ":" + tableId + ":" + newWatermark);
-            } catch (Exception ignored) {
+            } catch (RedisConnectionFailureException | IllegalStateException ex) {
+                LOGGER.warn("Redis watermark update/invalidation failed for key {}: {}", redisKey, ex.getMessage());
             }
         }
 

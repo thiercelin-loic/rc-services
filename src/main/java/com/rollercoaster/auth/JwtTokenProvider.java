@@ -1,5 +1,7 @@
 package com.rollercoaster.auth;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,16 +18,15 @@ import java.util.Objects;
 @Component
 public class JwtTokenProvider {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(JwtTokenProvider.class);
+
     private static final String HMAC_SHA256_ALGORITHM = "HmacSHA256";
     private static final String JWT_HEADER_JSON = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
-    private static final String DEFAULT_TENANT_ID = "ws-90124-enterprise";
 
     public static final String CLAIM_SUBJECT = "sub";
     public static final String CLAIM_USER_ID = "userId";
     public static final String CLAIM_EMAIL = "email";
     public static final String CLAIM_FULL_NAME = "fullName";
-    public static final String CLAIM_ROLE = "role";
-    public static final String CLAIM_TENANT_ID = "tenantId";
     public static final String CLAIM_ISSUED_AT = "iat";
     public static final String CLAIM_EXPIRATION = "exp";
 
@@ -112,7 +113,8 @@ public class JwtTokenProvider {
             long expirationEpochSeconds = Long.parseLong(String.valueOf(claims.get(CLAIM_EXPIRATION)));
             long currentEpochSeconds = Instant.now().getEpochSecond();
             return currentEpochSeconds >= expirationEpochSeconds;
-        } catch (Exception exception) {
+        } catch (IllegalArgumentException exception) {
+            LOGGER.debug("Treating unparseable JWT token as expired: {}", exception.getMessage());
             return true;
         }
     }
@@ -126,7 +128,8 @@ public class JwtTokenProvider {
             long expSeconds = Long.parseLong(String.valueOf(claims.get(CLAIM_EXPIRATION)));
             long diff = expSeconds - Instant.now().getEpochSecond();
             return diff > 0 ? java.time.Duration.ofSeconds(diff) : java.time.Duration.ZERO;
-        } catch (Exception e) {
+        } catch (IllegalArgumentException e) {
+            LOGGER.debug("Failed to parse JWT expiration claim, using default TTL: {}", e.getMessage());
             return java.time.Duration.ofHours(24);
         }
     }
@@ -134,16 +137,13 @@ public class JwtTokenProvider {
     private String buildPayloadJson(UserEntity user, Instant issuedAt, Instant expiresAt) {
         String userIdString = user.getId() != null ? user.getId().toString() : "";
         String fullNameString = user.getFullName() != null ? user.getFullName() : user.getUsername();
-        String tenantIdString = user.getTenantId() != null ? user.getTenantId() : DEFAULT_TENANT_ID;
 
         return String.format(
-                "{\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":%d,\"%s\":%d}",
+                "{\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":%d,\"%s\":%d}",
                 CLAIM_SUBJECT, escapeJson(user.getUsername()),
                 CLAIM_USER_ID, userIdString,
                 CLAIM_EMAIL, escapeJson(user.getEmail()),
                 CLAIM_FULL_NAME, escapeJson(fullNameString),
-                CLAIM_ROLE, escapeJson(user.getRole()),
-                CLAIM_TENANT_ID, escapeJson(tenantIdString),
                 CLAIM_ISSUED_AT, issuedAt.getEpochSecond(),
                 CLAIM_EXPIRATION, expiresAt.getEpochSecond()
         );
@@ -156,7 +156,7 @@ public class JwtTokenProvider {
             mac.init(secretKeySpec);
             byte[] signatureBytes = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
             return base64UrlEncode(signatureBytes);
-        } catch (Exception exception) {
+        } catch (java.security.NoSuchAlgorithmException | java.security.InvalidKeyException exception) {
             throw new IllegalStateException("Failed to calculate HMAC-SHA256 signature", exception);
         }
     }

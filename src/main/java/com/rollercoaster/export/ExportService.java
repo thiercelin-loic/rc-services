@@ -5,7 +5,5 @@ import com.rollercoaster.export.ExportDtos.ExportRequest;
 
 public interface ExportService {
 
-    ExportJobReceipt exportPdf(ExportRequest request);
-
-    ExportJobReceipt exportVisual(String reportId, String visualId, ExportRequest request);
+    ExportJobReceipt exportReport(String reportId, ExportRequest request);
 }

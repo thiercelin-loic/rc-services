@@ -85,3 +85,9 @@ yarn-error.log*
 *.duckdb.tmp
 *.db
 
+# Local Agent Rules
+AGENTS.md
+GEMINI.md
+.agents/
+
+

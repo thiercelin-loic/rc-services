@@ -69,7 +69,7 @@ public class SemanticModelController {
     }
 
     @PostMapping("/models/{modelId}/tables/{tableName}/rows")
-    @PreAuthorize("hasAuthority('PERM_MODEL_WRITE')")
+    @PreAuthorize("hasAnyAuthority('PERM_MODEL_WRITE', 'PERM_REPORT_READ')")
     public ResponseEntity<TableRowsIngestionResult> ingestTableRows(
             @PathVariable UUID modelId,
             @PathVariable String tableName,
@@ -80,6 +80,15 @@ public class SemanticModelController {
         semanticModelManager.getModel(modelId);
         int rowsIngested = dualEngineCoordinator.ingestDatasetRows("default-tenant", tableName, rows);
         return ResponseEntity.ok(new TableRowsIngestionResult(modelId, tableName, rowsIngested));
+    }
+
+    @GetMapping("/models/{modelId}/tables/{tableName}/rows")
+    @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
+    public ResponseEntity<List<Map<String, Object>>> getTableRows(
+            @PathVariable UUID modelId,
+            @PathVariable String tableName) {
+        semanticModelManager.getModel(modelId);
+        return ResponseEntity.ok(dualEngineCoordinator.getTableRows(tableName));
     }
 
     @PostMapping("/models/validate-dag")
@@ -160,7 +169,7 @@ public class SemanticModelController {
     }
 
     @PostMapping("/reports/{reportId}/query")
-    @PreAuthorize("hasAnyAuthority('PERM_REPORT_READ', 'ROLE_ADMIN', 'ROLE_USER', 'ROLE_OPERATOR')")
+    @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
     public ResponseEntity<QueryExecutionResult> executeVisualQuery(
             @PathVariable String reportId,
             @RequestBody VisualQueryDefinition query,

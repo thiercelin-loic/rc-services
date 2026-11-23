@@ -26,8 +26,7 @@ public final class AuthDtos {
             @Size(min = 6, max = 128, message = "Password must be at least 6 characters.")
             String password,
 
-            String fullName,
-            String role
+            String fullName
     ) {}
 
     public record LoginRequest(
@@ -62,8 +61,6 @@ public final class AuthDtos {
             String username,
             String email,
             String fullName,
-            String role,
-            String tenantId,
             Instant createdAt
     ) {
         public static UserDto from(UserEntity user) {
@@ -75,8 +72,6 @@ public final class AuthDtos {
                     user.getUsername(),
                     user.getEmail(),
                     user.getFullName(),
-                    user.getRole(),
-                    user.getTenantId(),
                     user.getCreatedAt()
             );
         }

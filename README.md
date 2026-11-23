@@ -250,5 +250,5 @@ All code within `rc-services` adheres to the Clean Code guidelines specified in 
 - **Single Responsibility & Thin Controllers**: Controllers handle routing, request validation (`@Valid`), status codes, and JSON serialization. Business logic and database interactions belong in services.
 - **Constructor Injection**: Inject dependencies through `private final` fields. Field injection (`@Autowired` on attributes) is prohibited.
 - **Immutable DTO Contracts**: Request and response payloads must use Java `record` types with Jakarta Bean Validation constraints (`@NotBlank`, `@Size`, `@Email`).
-- **Centralized Exception Handling**: Controllers must not contain repetitive try-catch blocks. Exceptions are captured and translated into RFC 7807 `ProblemDetail` structures by [`GlobalExceptionHandler`](./src/main/java/com/rollercoaster/config/GlobalExceptionHandler.java).
+- **Centralized Exception Handling**: Controllers must not contain repetitive try-catch blocks. Exceptions are captured and translated into RFC 9457 `ProblemDetail` structures by [`ErrorHandler`](./src/main/java/com/rollercoaster/config/ErrorHandler.java).
 - **Quality Gates**: The build enforces an 85% line coverage threshold via the JaCoCo Maven plugin.

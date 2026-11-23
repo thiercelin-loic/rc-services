@@ -10,6 +10,29 @@ public final class ExportDtos {
     private ExportDtos() {
     }
 
+    public record ExportChartDataset(
+            String label,
+            List<Double> data) {
+        public ExportChartDataset {
+            data = data != null ? List.copyOf(data) : List.of();
+        }
+    }
+
+    public record ExportChartData(
+            List<String> labels,
+            List<ExportChartDataset> datasets) {
+        public ExportChartData {
+            labels = labels != null ? List.copyOf(labels) : List.of();
+            datasets = datasets != null ? List.copyOf(datasets) : List.of();
+        }
+    }
+
+    public record CanvasDimensions(
+            Integer width,
+            Integer height,
+            String preset) {
+    }
+
     public record ExportVisualRecord(
             String id,
             String title,
@@ -17,7 +40,19 @@ public final class ExportDtos {
             String width,
             String metricLabel,
             String metricValue,
-            String metricSubtext) {
+            String metricSubtext,
+            ExportChartData chartData) {
+
+        public ExportVisualRecord(
+                String id,
+                String title,
+                String archetype,
+                String width,
+                String metricLabel,
+                String metricValue,
+                String metricSubtext) {
+            this(id, title, archetype, width, metricLabel, metricValue, metricSubtext, null);
+        }
     }
 
     public record ExportMeasureRecord(
@@ -31,12 +66,12 @@ public final class ExportDtos {
             String reportId,
             String visualId,
             String format,
-            Integer dpi,
             Boolean includeBom,
             String delimiter,
             String contextHash,
             String projectName,
             String pageName,
+            CanvasDimensions canvasDimensions,
             List<ExportVisualRecord> visuals,
             List<ExportMeasureRecord> measures) {
 
@@ -45,21 +80,46 @@ public final class ExportDtos {
             measures = measures != null ? List.copyOf(measures) : List.of();
         }
 
-        public static ExportRequest withVisualContext(String reportId, String visualId, ExportRequest source) {
+        public ExportRequest(
+                String reportId,
+                String visualId,
+                String format,
+                Boolean includeBom,
+                String delimiter,
+                String contextHash,
+                String projectName,
+                String pageName,
+                List<ExportVisualRecord> visuals,
+                List<ExportMeasureRecord> measures) {
+            this(
+                    reportId,
+                    visualId,
+                    format,
+                    includeBom,
+                    delimiter,
+                    contextHash,
+                    projectName,
+                    pageName,
+                    null,
+                    visuals,
+                    measures);
+        }
+
+        public static ExportRequest withReportContext(String reportId, ExportRequest source) {
             if (source == null) {
                 return new ExportRequest(
-                        reportId, visualId, "CSV", null, null, null, null, null, null, List.of(), List.of());
+                        reportId, null, "CSV", null, null, null, null, null, null, List.of(), List.of());
             }
             return new ExportRequest(
                     reportId,
-                    visualId,
+                    source.visualId(),
                     source.format(),
-                    source.dpi(),
                     source.includeBom(),
                     source.delimiter(),
                     source.contextHash(),
                     source.projectName(),
                     source.pageName(),
+                    source.canvasDimensions(),
                     source.visuals(),
                     source.measures());
         }

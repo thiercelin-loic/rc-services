@@ -12,8 +12,11 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class WebRestIntegrationService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(WebRestIntegrationService.class);
     private static final int CONNECT_TIMEOUT_MS = 5_000;
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
 
@@ -184,9 +188,12 @@ public class WebRestIntegrationService {
                 }
                 return;
             } catch (IllegalStateException rateEx) {
-                throw rateEx;
-            } catch (Exception ignored) {
-                // Fall through to in-memory token bucket if Redis is offline in unit test
+                if (rateEx.getMessage() != null && rateEx.getMessage().startsWith("ERR_RATE_LIMIT:")) {
+                    throw rateEx;
+                }
+                LOGGER.debug("Redis rate-limit state error for key {}, falling back to local bucket: {}", key, rateEx.getMessage());
+            } catch (RedisConnectionFailureException ex) {
+                LOGGER.debug("Redis rate-limit check failed for key {}, falling back to local bucket: {}", key, ex.getMessage());
             }
         }
         int count = localFallbackBucket.merge(key, 1, (a, b) -> a + b);

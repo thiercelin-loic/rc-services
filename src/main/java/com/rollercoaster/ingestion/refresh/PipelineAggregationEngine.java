@@ -3,8 +3,11 @@ package com.rollercoaster.ingestion.refresh;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rollercoaster.ingestion.RecordBatch;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +31,8 @@ import java.util.zip.GZIPOutputStream;
  */
 @Service
 public class PipelineAggregationEngine {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(PipelineAggregationEngine.class);
 
     public static final int DEFAULT_MAX_BUCKETS = 100_000;
 
@@ -152,8 +157,8 @@ public class PipelineAggregationEngine {
                 ps.setDouble(5, row.metricSum());
                 ps.setLong(6, row.recordCount());
             });
-        } catch (Exception ignored) {
-            // Gracefully continues when executing in unit tests without live MySQL connection
+        } catch (DataAccessException ex) {
+            LOGGER.warn("Failed to flush aggregated summaries to MySQL (continuing): {}", ex.getMessage());
         }
     }
 

@@ -69,7 +69,7 @@ public class RaxFormulaCompiler {
         String compiledExpression = visitor.visit(tree);
         String primaryTable = visitor.getReferencedTables().isEmpty()
                 ? "fact_store_sales"
-                : visitor.getReferencedTables().iterator().next().toLowerCase().replace(' ', '_');
+                : visitor.getReferencedTables().iterator().next().trim().replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase();
         String whereClause = visitor.getActiveFilterContext().toSqlWhereClause(dialect);
         String fullSelectQuery = "SELECT " + compiledExpression + " AS measure_value FROM " + primaryTable
                 + " WHERE " + whereClause;

@@ -26,22 +26,13 @@ public class ExportController {
         this.exportService = exportService;
     }
 
-    @PostMapping(value = "/export/pdf", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/{reportId}/export", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
-    public ResponseEntity<ExportJobReceipt> exportPdf(@Valid @RequestBody ExportRequest request) {
-        LOGGER.info("Received REST request to export PDF for report: {}", request.reportId());
-        ExportJobReceipt receipt = exportService.exportPdf(request);
-        return ResponseEntity.ok(receipt);
-    }
-
-    @PostMapping(value = "/{reportId}/visuals/{visualId}/export", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    @PreAuthorize("hasAuthority('PERM_REPORT_READ')")
-    public ResponseEntity<ExportJobReceipt> exportVisual(
+    public ResponseEntity<ExportJobReceipt> exportReport(
             @PathVariable String reportId,
-            @PathVariable String visualId,
             @Valid @RequestBody(required = false) ExportRequest request) {
-        LOGGER.info("Received REST request to export visual '{}' in report '{}'", visualId, reportId);
-        ExportJobReceipt receipt = exportService.exportVisual(reportId, visualId, request);
+        LOGGER.info("Received REST request to export report '{}'", reportId);
+        ExportJobReceipt receipt = exportService.exportReport(reportId, request);
         return ResponseEntity.ok(receipt);
     }
 }

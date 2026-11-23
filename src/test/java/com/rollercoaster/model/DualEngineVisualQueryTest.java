@@ -251,4 +251,33 @@ class DualEngineVisualQueryTest {
         assertThat(updatedMeasure.description()).isEqualTo("Updated description from TMDL");
         assertThat(updatedMeasure.formatString()).isEqualTo("$#,##0.00");
     }
+
+    @Test
+    @DisplayName("Compiles COUNTROWS() with groupByColumns into COUNT(*) against DuckDB")
+    void testCountRowsGroupedVisualQuery() {
+        VisualQueryDefinition query = new VisualQueryDefinition(
+                modelId,
+                "tenant-1",
+                "report-1",
+                "vis-countrows-1",
+                null,
+                "COUNTROWS()",
+                "orders",
+                500L,
+                false,
+                List.of("orders.category"),
+                Map.of(),
+                Map.of(),
+                LocalDate.of(2026, 11, 3),
+                "en-US"
+        );
+
+        QueryExecutionResult result = coordinator.executeVisualQuery(query, null);
+        assertThat(result.rows()).hasSize(3);
+        Map<String, Object> computeRow = result.rows().stream()
+                .filter(r -> "Compute".equals(r.get("category")))
+                .findFirst()
+                .orElseThrow();
+        assertThat(((Number) computeRow.get("measure_value")).longValue()).isEqualTo(2L);
+    }
 }

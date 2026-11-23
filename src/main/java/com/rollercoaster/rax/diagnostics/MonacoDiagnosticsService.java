@@ -23,7 +23,34 @@ import java.util.regex.Pattern;
 @Service
 public class MonacoDiagnosticsService {
 
+    public record RaxTokenDto(String text, String type) {}
+
+    public record RaxValidationResponse(
+            boolean isValid,
+            String statusLabel,
+            String measureName,
+            String formulaExpression,
+            List<DiagnosticMarker> diagnostics,
+            List<RaxTokenDto> tokens
+    ) {}
+
     private static final Pattern QUALIFIED_COL_PATTERN = Pattern.compile("(?:'([^']+)'|([\\p{L}_][\\p{L}\\p{Nd}_]*))\\[([^\\]]+)\\]");
+    private static final Pattern ASSIGNMENT_PATTERN = Pattern.compile("^\\s*([^=]+?)\\s*=\\s*([\\s\\S]*)$");
+    private static final Pattern VAR_DECL_PATTERN = Pattern.compile("(?i)^\\s*VAR\\s+[A-Za-z_][A-Za-z0-9_]*\\s*=");
+    private static final Pattern TOKEN_REGEX = Pattern.compile(
+            "(//[^\\n]*|--[^\\n]*|/\\*[\\s\\S]*?\\*/)|" +
+            "(\"(?:[^\"]|\"\")*\")|" +
+            "('[^']+'\\[[^\\]]+\\]|[A-Za-z_][A-Za-z0-9_]*\\[[^\\]]+\\]|\\[[^\\]]+\\])|" +
+            "('[^']+')|" +
+            "(\\b(?:VAR|RETURN|TRUE|FALSE|BLANK|IN|NOT|AND|OR|ASC|DESC|DEFINE|EVALUATE|MEASURE|ORDER|BY|START|AT)\\b)|" +
+            "(\\b[A-Za-z_][A-Za-z0-9_.]*(?=\\s*\\())|" +
+            "(\\b\\d+(?:\\.\\d+)?\\b)|" +
+            "(<>|<=|>=|&&|\\|\\||[=+\\-*/^&,()<>])|" +
+            "(\\b[A-Za-z_][A-Za-z0-9_]*\\b)|" +
+            "(\\s+)|" +
+            "(.)",
+            Pattern.CASE_INSENSITIVE
+    );
 
     private final SimpMessagingTemplate messagingTemplate;
 
@@ -34,6 +61,114 @@ public class MonacoDiagnosticsService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public MonacoDiagnosticsService(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
+    }
+
+    public RaxValidationResponse inspectFormula(String rawInput, String defaultMeasureName, SemanticModelSchema schema) {
+        String safeInput = rawInput != null ? rawInput : "";
+        String fallbackName = defaultMeasureName != null && !defaultMeasureName.isBlank() ? defaultMeasureName : "New Measure";
+        String measureName = fallbackName;
+        String formulaExpression = safeInput.trim();
+
+        if (!VAR_DECL_PATTERN.matcher(safeInput).find()) {
+            Matcher assignMatcher = ASSIGNMENT_PATTERN.matcher(safeInput);
+            if (assignMatcher.matches()) {
+                String candidateName = assignMatcher.group(1).trim();
+                if (!candidateName.isEmpty() && !candidateName.contains("(") && !candidateName.contains("[")) {
+                    measureName = candidateName;
+                    formulaExpression = assignMatcher.group(2).trim();
+                }
+            }
+        }
+
+        List<DiagnosticMarker> markers = validateFormula(formulaExpression, schema);
+        List<RaxTokenDto> tokens = tokenizeFormula(safeInput);
+        String structuralError = checkStructuralValidity(formulaExpression);
+        boolean isValid = structuralError == null && markers.stream().noneMatch(m -> "ERROR".equalsIgnoreCase(m.severity()));
+        String statusLabel;
+        if (isValid) {
+            statusLabel = "RAX Syntax Valid";
+        } else if (structuralError != null) {
+            statusLabel = structuralError;
+        } else {
+            statusLabel = "Syntax Error: " + markers.get(0).message();
+        }
+        return new RaxValidationResponse(isValid, statusLabel, measureName, formulaExpression, markers, tokens);
+    }
+
+    public List<RaxTokenDto> tokenizeFormula(String rawFormula) {
+        if (rawFormula == null || rawFormula.isEmpty()) {
+            return List.of();
+        }
+        List<RaxTokenDto> tokens = new ArrayList<>();
+        Matcher matcher = TOKEN_REGEX.matcher(rawFormula);
+        while (matcher.find()) {
+            String text = matcher.group(0);
+            String type;
+            if (matcher.group(1) != null) {
+                type = "comment";
+            } else if (matcher.group(2) != null) {
+                type = "string";
+            } else if (matcher.group(3) != null) {
+                type = "column";
+            } else if (matcher.group(4) != null) {
+                type = "table";
+            } else if (matcher.group(5) != null) {
+                type = "keyword";
+            } else if (matcher.group(6) != null) {
+                type = "function";
+            } else if (matcher.group(7) != null) {
+                type = "number";
+            } else if (matcher.group(8) != null) {
+                type = "operator";
+            } else if (matcher.group(9) != null) {
+                type = "identifier";
+            } else {
+                type = "plain";
+            }
+            tokens.add(new RaxTokenDto(text, type));
+        }
+        return tokens;
+    }
+
+    private String checkStructuralValidity(String expr) {
+        String trimmed = expr != null ? expr.trim() : "";
+        if (trimmed.isEmpty()) {
+            return "Syntax Error: Empty Expression";
+        }
+        if (Pattern.compile("<[^>]+>").matcher(trimmed).find()) {
+            return "Syntax Error: Replace Template Placeholders";
+        }
+        int openParen = 0;
+        int openBracket = 0;
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+        for (int i = 0; i < trimmed.length(); i++) {
+            char ch = trimmed.charAt(i);
+            if (ch == '\'' && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+            } else if (ch == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+            } else if (!inSingleQuote && !inDoubleQuote) {
+                if (ch == '(') openParen++;
+                else if (ch == ')') openParen--;
+                else if (ch == '[') openBracket++;
+                else if (ch == ']') openBracket--;
+                if (openParen < 0) return "Syntax Error: Unexpected ')'";
+                if (openBracket < 0) return "Syntax Error: Unexpected ']'";
+            }
+        }
+        if (inSingleQuote || inDoubleQuote) return "Syntax Error: Unclosed Quote";
+        if (openParen != 0) return "Syntax Error: Unbalanced '('";
+        if (openBracket != 0) return "Syntax Error: Unbalanced '['";
+        boolean hasVar = Pattern.compile("(?i)\\bVAR\\b").matcher(trimmed).find();
+        boolean hasReturn = Pattern.compile("(?i)\\bRETURN\\b").matcher(trimmed).find();
+        if (hasVar && !hasReturn) {
+            return "Syntax Error: VAR requires RETURN";
+        }
+        if (Pattern.compile("[+\\-*/^&,=]\\s*$").matcher(trimmed).find()) {
+            return "Syntax Error: Trailing Operator";
+        }
+        return null;
     }
 
     public List<DiagnosticMarker> validateFormula(String raxFormula, SemanticModelSchema schema) {

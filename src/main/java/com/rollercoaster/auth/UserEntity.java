@@ -10,15 +10,11 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
-import java.util.Objects;
 import java.util.UUID;
 
 @Entity
 @Table(name = "rc_users")
 public class UserEntity {
-
-    private static final String DEFAULT_TENANT_ID = "ws-90124-enterprise";
-    private static final String DEFAULT_ROLE = "ROLE_OPERATOR";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -35,12 +31,6 @@ public class UserEntity {
 
     @Column(name = "full_name", length = 128)
     private String fullName;
-
-    @Column(name = "role", nullable = false, length = 32)
-    private String role;
-
-    @Column(name = "tenant_id", nullable = false, length = 64)
-    private String tenantId = DEFAULT_TENANT_ID;
 
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
@@ -60,16 +50,12 @@ public class UserEntity {
             String email,
             String password,
             String fullName,
-            String role,
-            String tenantId,
             boolean enabled) {
         this.id = id;
         this.username = username;
         this.email = email;
         this.password = password;
         this.fullName = fullName;
-        this.role = (role != null && !role.isBlank()) ? role : DEFAULT_ROLE;
-        this.tenantId = (tenantId != null && !tenantId.isBlank()) ? tenantId : DEFAULT_TENANT_ID;
         this.enabled = enabled;
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
@@ -79,17 +65,13 @@ public class UserEntity {
             String username,
             String email,
             String encodedPassword,
-            String fullName,
-            String role,
-            String tenantId) {
+            String fullName) {
         return new UserEntity(
                 null,
                 username,
                 email,
                 encodedPassword,
                 (fullName != null && !fullName.isBlank()) ? fullName.trim() : username,
-                role,
-                tenantId,
                 true
         );
     }
@@ -112,10 +94,6 @@ public class UserEntity {
 
     public boolean isActive() {
         return enabled;
-    }
-
-    public boolean hasRole(String expectedRole) {
-        return Objects.equals(this.role, expectedRole);
     }
 
     public UUID getId() {
@@ -156,22 +134,6 @@ public class UserEntity {
 
     public void setFullName(String fullName) {
         this.fullName = fullName;
-    }
-
-    public String getRole() {
-        return role;
-    }
-
-    public void setRole(String role) {
-        this.role = role;
-    }
-
-    public String getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(String tenantId) {
-        this.tenantId = tenantId;
     }
 
     public boolean isEnabled() {
