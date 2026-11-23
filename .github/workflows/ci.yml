@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-name:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR branch name
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ ! "$HEAD_REF" =~ ^(feat|fix|hotfix|refactor|docs|test|perf|chore|ci|build)/[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "Invalid branch name: '$HEAD_REF'"
+            echo "Expected: <type>/<lowercase-hyphenated-description> (e.g. feat/proj-123-add-export or fix/null-pointer)"
+            exit 1
+          fi
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run unit tests and Checkstyle
+        run: mvn -B test checkstyle:check
