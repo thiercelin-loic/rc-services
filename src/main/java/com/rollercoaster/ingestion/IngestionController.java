@@ -1,13 +1,15 @@
 package com.rollercoaster.ingestion;
 
+import com.rollercoaster.ingestion.IngestionDtos.PipelinePreviewRequest;
+import com.rollercoaster.ingestion.IngestionDtos.PipelinePreviewResponse;
 import com.rollercoaster.ingestion.IngestionDtos.SheetColumnDto;
 import com.rollercoaster.ingestion.IngestionDtos.SheetExtractionRequest;
 import com.rollercoaster.ingestion.IngestionDtos.SheetExtractionResponse;
 import com.rollercoaster.ingestion.refresh.IncrementalRefreshCoordinator;
 import com.rollercoaster.ingestion.refresh.IncrementalRefreshCoordinator.FactDeltaRecord;
 import com.rollercoaster.ingestion.refresh.IncrementalRefreshCoordinator.IncrementalRefreshResult;
+import com.rollercoaster.ingestion.rquery.DataPrepPipelineService;
 import com.rollercoaster.ingestion.rquery.RQueryStep;
-import com.rollercoaster.ingestion.rquery.RQueryTransformationEngine;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,15 +18,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Flux;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -37,18 +35,18 @@ public class IngestionController {
 
     private final DataIngestionService dataIngestionService;
     private final SheetExtractionService sheetExtractionService;
-    private final RQueryTransformationEngine rQueryEngine;
+    private final DataPrepPipelineService dataPrepPipelineService;
     private final IncrementalRefreshCoordinator refreshCoordinator;
 
     public IngestionController(
             DataIngestionService dataIngestionService,
             SheetExtractionService sheetExtractionService,
-            RQueryTransformationEngine rQueryEngine,
+            DataPrepPipelineService dataPrepPipelineService,
             IncrementalRefreshCoordinator refreshCoordinator) {
-        this.dataIngestionService = dataIngestionService;
-        this.sheetExtractionService = sheetExtractionService;
-        this.rQueryEngine = rQueryEngine;
-        this.refreshCoordinator = refreshCoordinator;
+        this.dataIngestionService = Objects.requireNonNull(dataIngestionService, "dataIngestionService must not be null");
+        this.sheetExtractionService = Objects.requireNonNull(sheetExtractionService, "sheetExtractionService must not be null");
+        this.dataPrepPipelineService = Objects.requireNonNull(dataPrepPipelineService, "dataPrepPipelineService must not be null");
+        this.refreshCoordinator = Objects.requireNonNull(refreshCoordinator, "refreshCoordinator must not be null");
     }
 
     /**
@@ -67,7 +65,10 @@ public class IngestionController {
             String sheetName,
             Map<String, List<Map<String, Object>>> lookupTables,
             List<SheetColumnDto> initialColumns,
-            List<Map<String, Object>> initialRows
+            List<Map<String, Object>> initialRows,
+            String fileName,
+            String rangeStart,
+            String rangeEnd
     ) {
         public RQueryPreviewRequest(
                 String tenantId,
@@ -78,7 +79,39 @@ public class IngestionController {
                 String rawPayloadBase64,
                 String sheetName,
                 Map<String, List<Map<String, Object>>> lookupTables) {
-            this(tenantId, datasetId, format, rawPayload, steps, rawPayloadBase64, sheetName, lookupTables, null, null);
+            this(tenantId, datasetId, format, rawPayload, steps, rawPayloadBase64, sheetName, lookupTables, null, null, null, null, null);
+        }
+
+        public RQueryPreviewRequest(
+                String tenantId,
+                String datasetId,
+                SourceFormat format,
+                String rawPayload,
+                List<RQueryStep> steps,
+                String rawPayloadBase64,
+                String sheetName,
+                Map<String, List<Map<String, Object>>> lookupTables,
+                List<SheetColumnDto> initialColumns,
+                List<Map<String, Object>> initialRows) {
+            this(tenantId, datasetId, format, rawPayload, steps, rawPayloadBase64, sheetName, lookupTables, initialColumns, initialRows, null, null, null);
+        }
+
+        public PipelinePreviewRequest toPipelinePreviewRequest() {
+            return new PipelinePreviewRequest(
+                    tenantId,
+                    datasetId,
+                    fileName,
+                    format,
+                    rawPayload,
+                    rawPayloadBase64,
+                    sheetName,
+                    steps,
+                    lookupTables,
+                    initialColumns,
+                    initialRows,
+                    rangeStart,
+                    rangeEnd
+            );
         }
     }
 
@@ -123,67 +156,30 @@ public class IngestionController {
         return ResponseEntity.ok(sheetExtractionService.extractSheets(request));
     }
 
+    /**
+     * Legacy streaming batch preview endpoint preserved for backward compatibility.
+     */
     @PostMapping("/preview")
     @PreAuthorize("hasAnyAuthority('PERM_MODEL_WRITE', 'PERM_REPORT_READ')")
     public ResponseEntity<List<RecordBatch>> previewPipeline(@RequestBody RQueryPreviewRequest request) {
-        Flux<RecordBatch> sourceStream;
-        if (request.initialRows() != null) {
-            Map<String, DataType> schema = new LinkedHashMap<>();
-            if (request.initialColumns() != null) {
-                for (SheetColumnDto col : request.initialColumns()) {
-                    schema.put(col.name(), mapUiColumnType(col.type()));
-                }
-            } else if (!request.initialRows().isEmpty()) {
-                for (String key : request.initialRows().get(0).keySet()) {
-                    schema.put(key, DataType.UTF8_STRING);
-                }
-            }
-            sourceStream = Flux.just(new RecordBatch(0, schema, request.initialRows(), List.of()));
-        } else {
-            SourceFormat format = request.format() != null ? request.format() : SourceFormat.CSV;
-            char delimiter = format == SourceFormat.TSV
-                    ? '\t'
-                    : DataIngestionService.detectDelimiter(request.rawPayload());
-            SchemaHints hints = new SchemaHints(
-                    request.tenantId(),
-                    request.datasetId(),
-                    format,
-                    request.sheetName(),
-                    0,
-                    delimiter,
-                    true,
-                    StandardCharsets.UTF_8,
-                    Map.of()
-            );
-            byte[] payloadBytes = request.rawPayloadBase64() != null && !request.rawPayloadBase64().isBlank()
-                    ? Base64.getDecoder().decode(request.rawPayloadBase64())
-                    : (request.rawPayload() != null ? request.rawPayload() : "").getBytes(StandardCharsets.UTF_8);
-            ByteArrayInputStream stream = new ByteArrayInputStream(payloadBytes);
-            sourceStream = dataIngestionService.ingestStream(stream, hints);
+        if (request == null) {
+            throw new IllegalArgumentException("RQueryPreviewRequest body is required");
         }
-
-        List<RecordBatch> batches = rQueryEngine.executePipeline(
-                        sourceStream,
-                        request.steps() != null ? request.steps() : List.of(),
-                        request.lookupTables() != null ? request.lookupTables() : Map.of(),
-                        request.tenantId() != null ? request.tenantId() : "default-tenant",
-                        request.datasetId() != null ? request.datasetId() : "preview-dataset")
-                .collectList()
-                .block();
-        return ResponseEntity.ok(batches != null ? batches : List.of());
+        return ResponseEntity.ok(dataPrepPipelineService.evaluateRecordBatches(request.toPipelinePreviewRequest()));
     }
 
-    private DataType mapUiColumnType(String uiType) {
-        if (uiType == null) return DataType.UTF8_STRING;
-        return switch (uiType.toUpperCase()) {
-            case "INT64", "INTEGER", "WHOLE NUMBER" -> DataType.INT64;
-            case "FLOAT64", "DOUBLE", "DECIMAL NUMBER" -> DataType.FLOAT64;
-            case "DECIMAL", "CURRENCY" -> DataType.DECIMAL;
-            case "BOOLEAN", "TRUE/FALSE" -> DataType.BOOLEAN;
-            case "DATE", "ISO_DATE" -> DataType.ISO_DATE;
-            case "DATETIME", "ISO_DATETIME" -> DataType.ISO_DATETIME;
-            default -> DataType.UTF8_STRING;
-        };
+    /**
+     * Unified Data Preparation preview endpoint returning normalized columns ({@code name}, {@code type},
+     * {@code displayType}, {@code numeric}), transformed rows, quarantined records, full Power Query M script,
+     * and active step formula.
+     */
+    @PostMapping({"/pipeline/preview", "/pipeline/evaluate"})
+    @PreAuthorize("hasAnyAuthority('PERM_MODEL_WRITE', 'PERM_REPORT_READ')")
+    public ResponseEntity<PipelinePreviewResponse> evaluatePipelinePreview(@RequestBody PipelinePreviewRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("PipelinePreviewRequest body is required");
+        }
+        return ResponseEntity.ok(dataPrepPipelineService.evaluatePreview(request));
     }
 
     @GetMapping("/quarantine/{tenantId}/{datasetId}")

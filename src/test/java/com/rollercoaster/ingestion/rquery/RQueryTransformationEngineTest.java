@@ -25,6 +25,7 @@ class RQueryTransformationEngineTest {
         return m;
     }
 
+    @SafeVarargs
     private static RecordBatch batch(Map<String, DataType> schema, Map<String, Object>... rows) {
         return new RecordBatch(0, schema, List.of(rows), List.of());
     }
