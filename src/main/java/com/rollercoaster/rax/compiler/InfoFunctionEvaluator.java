@@ -26,9 +26,13 @@ public class InfoFunctionEvaluator {
         }
         String upper = raxExpression.toUpperCase();
         return upper.contains("INFO.VIEW.TABLES")
+                || upper.contains("INFO.TABLES")
                 || upper.contains("INFO.VIEW.COLUMNS")
+                || upper.contains("INFO.COLUMNS")
                 || upper.contains("INFO.VIEW.MEASURES")
+                || upper.contains("INFO.MEASURES")
                 || upper.contains("INFO.VIEW.RELATIONSHIPS")
+                || upper.contains("INFO.RELATIONSHIPS")
                 || upper.contains("INFO.PARTITIONS")
                 || upper.contains("INFO.CALCDEPENDENCY")
                 || upper.contains("INFO.STORAGETABLECOLUMNS");
@@ -39,7 +43,9 @@ public class InfoFunctionEvaluator {
             return List.of();
         }
         String upper = raxExpression.toUpperCase();
-        if (upper.contains("UNION(") && upper.contains("INFO.VIEW.COLUMNS") && upper.contains("INFO.VIEW.MEASURES")) {
+        if (upper.contains("UNION(")
+                && (upper.contains("INFO.VIEW.COLUMNS") || upper.contains("INFO.COLUMNS"))
+                && (upper.contains("INFO.VIEW.MEASURES") || upper.contains("INFO.MEASURES"))) {
             return buildUnifiedDataDictionary(schema);
         }
         if (upper.contains("INFO.CALCDEPENDENCY")) {
@@ -51,16 +57,16 @@ public class InfoFunctionEvaluator {
         if (upper.contains("INFO.PARTITIONS")) {
             return evaluateInfoPartitions(schema);
         }
-        if (upper.contains("INFO.VIEW.RELATIONSHIPS")) {
+        if (upper.contains("INFO.VIEW.RELATIONSHIPS") || upper.contains("INFO.RELATIONSHIPS")) {
             return evaluateInfoViewRelationships(schema);
         }
-        if (upper.contains("INFO.VIEW.MEASURES")) {
+        if (upper.contains("INFO.VIEW.MEASURES") || upper.contains("INFO.MEASURES")) {
             return evaluateInfoViewMeasures(schema);
         }
-        if (upper.contains("INFO.VIEW.COLUMNS")) {
+        if (upper.contains("INFO.VIEW.COLUMNS") || upper.contains("INFO.COLUMNS")) {
             return evaluateInfoViewColumns(schema);
         }
-        if (upper.contains("INFO.VIEW.TABLES")) {
+        if (upper.contains("INFO.VIEW.TABLES") || upper.contains("INFO.TABLES")) {
             return evaluateInfoViewTables(schema);
         }
         return List.of();
