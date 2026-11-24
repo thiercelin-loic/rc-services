@@ -233,17 +233,20 @@ public class DuckDbConnectionManager {
         partitionLock.writeLock().lock();
         try (Connection conn = acquireConnection();
              Statement stmt = conn.createStatement()) {
+            String quotedTable = "\"" + safeTable + "\"";
             List<String> colDefs = new ArrayList<>();
             for (Map.Entry<String, String> col : inferredColumns.entrySet()) {
-                colDefs.add(col.getKey() + " " + col.getValue());
+                colDefs.add("\"" + col.getKey() + "\" " + col.getValue());
             }
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + safeTable + " (" + String.join(", ", colDefs) + ")");
+            stmt.execute("CREATE TABLE IF NOT EXISTS " + quotedTable + " (" + String.join(", ", colDefs) + ")");
             for (Map.Entry<String, String> col : inferredColumns.entrySet()) {
-                stmt.execute("ALTER TABLE " + safeTable + " ADD COLUMN IF NOT EXISTS " + col.getKey() + " " + col.getValue());
+                stmt.execute("ALTER TABLE " + quotedTable + " ADD COLUMN IF NOT EXISTS \""
+                        + col.getKey() + "\" " + col.getValue());
             }
-            stmt.execute("DELETE FROM " + safeTable);
+            stmt.execute("DELETE FROM " + quotedTable);
 
             List<String> colNames = new ArrayList<>(inferredColumns.keySet());
+            List<String> quotedColNames = colNames.stream().map(c -> "\"" + c + "\"").toList();
             int inserted = 0;
             for (Map<String, Object> row : rows) {
                 if (row == null) {
@@ -254,7 +257,7 @@ public class DuckDbConnectionManager {
                     Object rawVal = findIgnoreCase(row, colName);
                     valuesSql.add(formatDuckDbLiteral(rawVal));
                 }
-                stmt.execute("INSERT INTO " + safeTable + " (" + String.join(", ", colNames)
+                stmt.execute("INSERT INTO " + quotedTable + " (" + String.join(", ", quotedColNames)
                         + ") VALUES (" + String.join(", ", valuesSql) + ")");
                 inserted++;
             }
@@ -272,7 +275,7 @@ public class DuckDbConnectionManager {
             return List.of();
         }
         try {
-            return executeColumnarQuery("SELECT * FROM " + safeTable + " LIMIT 10000");
+            return executeColumnarQuery("SELECT * FROM \"" + safeTable + "\" LIMIT 10000");
         } catch (SQLException ex) {
             LOGGER.debug("Failed to query DuckDB table {}: {}", safeTable, ex.getMessage());
             return List.of();
