@@ -6,6 +6,9 @@ spring:
       enabled: true
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  jackson:
+    deserialization:
+      fail-on-null-for-primitives: false
   mvc:
     problemdetails:
       enabled: true
