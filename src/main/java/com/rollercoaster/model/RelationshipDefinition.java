@@ -27,14 +27,20 @@ public record RelationshipDefinition(
     }
 
     public String toRsdlSnippet() {
-        String cardLabel = cardinality == Cardinality.ONE_TO_ONE
-                ? "OneToOne"
-                : cardinality == Cardinality.MANY_TO_MANY
-                        ? "ManyToMany"
-                        : cardinality == Cardinality.ONE_TO_MANY
-                                ? "OneToMany"
-                                : "ManyToOne";
-        String crossFilterLabel = crossFilterDirection == CrossFilterDirection.BOTH ? "Both" : "Single";
+        Cardinality effectiveCardinality = cardinality != null ? cardinality : Cardinality.MANY_TO_ONE;
+        CrossFilterDirection effectiveDirection = crossFilterDirection != null
+                ? crossFilterDirection
+                : CrossFilterDirection.SINGLE;
+        String cardLabel = switch (effectiveCardinality) {
+            case ONE_TO_ONE -> "OneToOne";
+            case MANY_TO_ONE -> "ManyToOne";
+            case ONE_TO_MANY -> "OneToMany";
+            case MANY_TO_MANY -> "ManyToMany";
+        };
+        String crossFilterLabel = switch (effectiveDirection) {
+            case SINGLE -> "Single";
+            case BOTH -> "Both";
+        };
         return """
                 relationship '%s'
                   fromColumn: '%s'[%s]
@@ -45,3 +51,4 @@ public record RelationshipDefinition(
                 name, fromTable, fromColumn, toTable, toColumn, cardLabel, crossFilterLabel, isActive);
     }
 }
+
