@@ -192,8 +192,35 @@ public class RQueryTransformationEngine {
     }
 
     private RecordBatch applyChangeType(RecordBatch batch, RQueryStep step, String tenantId, String datasetId) {
+        if (step.parameters() != null && step.parameters().get("columnTypes") instanceof Map<?, ?> typeMap && !typeMap.isEmpty()) {
+            RecordBatch current = batch;
+            for (Map.Entry<?, ?> entry : typeMap.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null) {
+                    String colName = entry.getKey().toString();
+                    DataType targetType = DataType.fromLabel(entry.getValue().toString());
+                    current = applySingleColumnChangeType(current, colName, targetType, tenantId, datasetId);
+                }
+            }
+            return current;
+        }
+        if (step.column() == null || step.column().isBlank()) {
+            return batch;
+        }
+        DataType targetType = step.type() != null ? step.type() : DataType.UTF8_STRING;
+        return applySingleColumnChangeType(batch, step.column(), targetType, tenantId, datasetId);
+    }
+
+    private RecordBatch applySingleColumnChangeType(
+            RecordBatch batch,
+            String column,
+            DataType targetType,
+            String tenantId,
+            String datasetId) {
+        if (!batch.schema().containsKey(column)) {
+            return batch;
+        }
         Map<String, DataType> newSchema = new LinkedHashMap<>(batch.schema());
-        newSchema.put(step.column(), step.type());
+        newSchema.put(column, targetType);
 
         List<Map<String, Object>> validRows = new ArrayList<>();
         List<QuarantineRecord> quarantined = new ArrayList<>(batch.quarantinedRecords());
@@ -203,18 +230,18 @@ public class RQueryTransformationEngine {
             rowIdx++;
             Map<String, Object> copy = new LinkedHashMap<>(row);
             try {
-                Object coerced = typeInferenceEngine.coerceValue(copy.get(step.column()), step.type());
-                copy.put(step.column(), coerced);
+                Object coerced = typeInferenceEngine.coerceValue(copy.get(column), targetType);
+                copy.put(column, coerced);
                 validRows.add(copy);
             } catch (Exception ex) {
                 quarantined.add(new QuarantineRecord(
                         tenantId,
                         datasetId,
                         rowIdx,
-                        step.column(),
-                        step.type().name(),
+                        column,
+                        targetType.name(),
                         row.toString(),
-                        "ChangeTypeStep failed on column '" + step.column() + "': " + ex.getMessage()
+                        "ChangeTypeStep failed on column '" + column + "': " + ex.getMessage()
                 ));
             }
         }

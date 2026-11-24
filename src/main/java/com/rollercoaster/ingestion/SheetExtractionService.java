@@ -56,17 +56,17 @@ public class SheetExtractionService {
 
     public SheetExtractionResponse extractSheets(SheetExtractionRequest request) {
         if (request == null) {
-            return new SheetExtractionResponse(List.of(), "Ingestion request payload is required.");
+            return new SheetExtractionResponse("Dataset", List.of(), "Ingestion request payload is required.");
         }
         String fileName = (request.fileName() != null && !request.fileName().isBlank())
                 ? request.fileName()
                 : "Dataset";
-        String baseTitle = resolveBaseTitle(fileName);
+        String baseTitle = sanitizeTableName(fileName);
         SourceFormat format = request.format() != null ? request.format() : detectFormat(fileName);
         String text = request.rawPayload() != null ? request.rawPayload() : "";
 
         try {
-            return switch (format) {
+            SheetExtractionResponse result = switch (format) {
                 case XLSX -> extractXlsxSheets(baseTitle, text, request.rawPayloadBase64());
                 case JSON -> extractJsonSheets(baseTitle, text);
                 case XML -> extractXmlSheets(baseTitle, text);
@@ -74,32 +74,30 @@ public class SheetExtractionService {
                         baseTitle, text, format == SourceFormat.TSV ? '\t' : DataIngestionService.detectDelimiter(text));
                 default -> extractDelimitedSheets(baseTitle, text, DataIngestionService.detectDelimiter(text));
             };
+            return new SheetExtractionResponse(baseTitle, result.sheets(), result.error());
         } catch (IllegalArgumentException ex) {
             LOGGER.warn("Invalid ingestion sheet request for '{}': {}", fileName, ex.getMessage());
-            return new SheetExtractionResponse(List.of(), ex.getMessage());
+            return new SheetExtractionResponse(baseTitle, List.of(), ex.getMessage());
         }
     }
 
-    private String resolveBaseTitle(String fileName) {
-        String baseTitle = fileName.replaceAll("\\.[^/.]+$", "").replaceAll("[-_]+", " ").trim();
-        return baseTitle.isEmpty() ? "Dataset" : baseTitle;
+    public static String sanitizeTableName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "Dataset";
+        }
+        String baseName = fileName.replace('\\', '/');
+        int slashIdx = baseName.lastIndexOf('/');
+        if (slashIdx >= 0 && slashIdx < baseName.length() - 1) {
+            baseName = baseName.substring(slashIdx + 1);
+        }
+        String stripped = baseName.replaceAll("\\.[^/.]+$", "")
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .trim();
+        return stripped.isEmpty() ? "Dataset" : stripped;
     }
 
     private SourceFormat detectFormat(String fileName) {
-        String lower = fileName.toLowerCase();
-        if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-            return SourceFormat.XLSX;
-        }
-        if (lower.endsWith(".json")) {
-            return SourceFormat.JSON;
-        }
-        if (lower.endsWith(".xml")) {
-            return SourceFormat.XML;
-        }
-        if (lower.endsWith(".tsv")) {
-            return SourceFormat.TSV;
-        }
-        return SourceFormat.CSV;
+        return SourceFormat.fromFileName(fileName).orElse(SourceFormat.CSV);
     }
 
     private SheetExtractionResponse extractXlsxSheets(String baseTitle, String text, String base64) {
@@ -109,11 +107,11 @@ public class SheetExtractionService {
             if (isZipHeader(bytes)) {
                 List<WorkbookSheetDto> poiSheets = tryExtractPoiWorkbook(bytes);
                 if (!poiSheets.isEmpty()) {
-                    return new SheetExtractionResponse(poiSheets, null);
+                    return new SheetExtractionResponse(baseTitle, poiSheets, null);
                 }
                 List<WorkbookSheetDto> xmlZipSheets = tryExtractOpenXmlZip(bytes);
                 if (!xmlZipSheets.isEmpty()) {
-                    return new SheetExtractionResponse(xmlZipSheets, null);
+                    return new SheetExtractionResponse(baseTitle, xmlZipSheets, null);
                 }
             }
             if (effectiveText.isBlank()) {
