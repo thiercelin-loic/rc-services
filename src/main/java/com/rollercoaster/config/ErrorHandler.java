@@ -69,10 +69,63 @@ public class ErrorHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setTitle("Invalid Request Argument");
-        problem.setProperty("errorCode", "ERR_INVALID_ARGUMENT");
+        String detail = ex.getMessage() != null ? ex.getMessage() : "Invalid request argument.";
+        boolean syntaxError = detail.startsWith("ERR_RAX_SYNTAX");
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+        problem.setTitle(syntaxError ? "RAX Syntax Validation Error" : "Invalid Request Argument");
+        problem.setProperty("errorCode", syntaxError ? "ERR_RAX_SYNTAX" : "ERR_INVALID_ARGUMENT");
+        problem.setProperty("timestamp", Instant.now().toString());
+        return problem;
+    }
+
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ProblemDetail handleMethodArgumentNotValid(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+        String validationMessage = ex.getBindingResult().getFieldErrors().stream()
+                .map(fieldError -> fieldError.getDefaultMessage())
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse("Validation failed for request payload.");
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, validationMessage);
+        problem.setTitle("Validation Error");
+        problem.setProperty("errorCode", "ERR_VALIDATION_FAILED");
+        problem.setProperty("timestamp", Instant.now().toString());
+        return problem;
+    }
+
+    @ExceptionHandler(NullPointerException.class)
+    public ProblemDetail handleNullPointer(NullPointerException ex) {
+        String detail = ex.getMessage() != null ? ex.getMessage() : "Required domain argument must not be null.";
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+        problem.setTitle("Missing Required Argument");
+        problem.setProperty("errorCode", "ERR_MISSING_ARGUMENT");
+        problem.setProperty("timestamp", Instant.now().toString());
+        return problem;
+    }
+
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ProblemDetail handleHttpMessageNotReadable(
+            org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        Throwable specificCause = ex.getMostSpecificCause();
+        String detail = (specificCause != null && specificCause.getMessage() != null)
+                ? specificCause.getMessage()
+                : "Malformed request payload.";
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+        problem.setTitle("Malformed Request Payload");
+        problem.setProperty("errorCode", "ERR_MALFORMED_REQUEST");
+        problem.setProperty("timestamp", Instant.now().toString());
+        return problem;
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ProblemDetail handleIllegalState(IllegalStateException ex) {
+        String detail = ex.getMessage() != null ? ex.getMessage() : "Invalid domain state.";
+        boolean circularDep = detail.startsWith("ERR_CIRCULAR_DEP");
+        HttpStatus status = circularDep ? HttpStatus.UNPROCESSABLE_CONTENT : HttpStatus.INTERNAL_SERVER_ERROR;
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setTitle(circularDep ? "Circular Dependency Detected" : "Domain State Error");
+        problem.setProperty("errorCode", circularDep ? "ERR_CIRCULAR_DEP" : "ERR_ILLEGAL_STATE");
         problem.setProperty("timestamp", Instant.now().toString());
         return problem;
     }
 }
+
